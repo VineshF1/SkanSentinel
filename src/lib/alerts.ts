@@ -1,7 +1,6 @@
 import type Database from "better-sqlite3";
 import { getDb, nowSeconds, type MonitorRow } from "./db";
 import { sanitizeText } from "./sanitizer";
-import { isDemoMode } from "./config";
 import { checkWebhookUrlSafe } from "./monitors";
 
 export type AlertType = "FAILED" | "MISSED" | "RUNAWAY" | "RECOVERED";
@@ -81,10 +80,6 @@ export function queueIncidentAlert(
     let delivery = "PENDING";
     let sentAt: number | null = null;
     if (!ch) delivery = "SKIPPED";
-    else if (ch === "demo") {
-      delivery = "DELIVERED";
-      sentAt = now;
-    }
     dd.prepare(
       "UPDATE monitors SET status = ?, open_incident = ? WHERE id = ?"
     ).run(newStatus, incidentType, monitorId);
@@ -117,10 +112,6 @@ export function queueRecoveryAlert(
     let delivery = "PENDING";
     let sentAt: number | null = null;
     if (!ch) delivery = "SKIPPED";
-    else if (ch === "demo") {
-      delivery = "DELIVERED";
-      sentAt = now;
-    }
     dd.prepare(
       "UPDATE monitors SET status = 'HEALTHY', open_incident = NULL WHERE id = ?"
     ).run(monitorId);
@@ -169,13 +160,6 @@ export async function sendPendingAlerts(
   for (const a of rows) {
     if (!a.ch_type || !a.ch_url) {
       dd.prepare("UPDATE alerts SET delivery_status='SKIPPED' WHERE id=?").run(a.id);
-      continue;
-    }
-    if (a.ch_type === "demo" || (isDemoMode() && a.ch_type === "demo")) {
-      dd.prepare(
-        "UPDATE alerts SET delivery_status='DELIVERED', sent_at=? WHERE id=?"
-      ).run(now, a.id);
-      sent++;
       continue;
     }
     // Re-check SSRF safety at send time.

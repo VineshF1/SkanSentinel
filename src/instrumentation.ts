@@ -8,13 +8,5 @@ export async function register(): Promise<void> {
     }
     const { startWorker } = await import("./lib/worker");
     startWorker();
-    if (process.env.DEMO_MODE === "1") {
-      const { ensureDemoSeed } = await import("./lib/demo");
-      try {
-        ensureDemoSeed();
-      } catch (e) {
-        console.error("[demo] seed failed", e);
-      }
-    }
   }
 }

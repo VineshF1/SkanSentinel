@@ -1,11 +1,10 @@
 import { isAuthorized, unauthorizedResponse } from "@/lib/auth";
 import { getDb, type MonitorRow } from "@/lib/db";
 import { checkWebhookUrlSafe } from "@/lib/monitors";
-import { isDemoMode } from "@/lib/config";
 
 export const runtime = "nodejs";
 
-const TYPES = new Set(["none", "slack", "discord", "webhook", "demo"]);
+const TYPES = new Set(["none", "slack", "discord", "webhook"]);
 
 export async function PATCH(
   req: Request,
@@ -31,12 +30,6 @@ export async function PATCH(
   if (!TYPES.has(rawType)) {
     return Response.json(
       { errors: { alert_channel_type: "Unknown alert channel" } },
-      { status: 400 }
-    );
-  }
-  if (rawType === "demo" && !isDemoMode()) {
-    return Response.json(
-      { errors: { alert_channel_type: "Demo sink is only available in demo mode" } },
       { status: 400 }
     );
   }

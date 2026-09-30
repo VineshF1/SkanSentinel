@@ -3,7 +3,7 @@ import dns from "node:dns/promises";
 import net from "node:net";
 import type Database from "better-sqlite3";
 import { getDb, nowSeconds } from "./db";
-import { isDemoMode, allowPrivateWebhooks } from "./config";
+import { allowPrivateWebhooks } from "./config";
 import { validateCron, validateTimezone, nextSlotAfter } from "./schedule";
 
 export const SLUG_RE = /^[a-z0-9-]+$/;
@@ -49,11 +49,9 @@ export function validateMonitorInput(
   if (!Number.isInteger(maxRt) || maxRt < 1 || maxRt > 10080)
     errors.max_runtime_minutes = "Max runtime must be 1–10080 minutes";
   const chType = input.alert_channel_type ?? null;
-  const allowed = ["slack", "discord", "webhook", "demo", null, "", "none"];
+  const allowed = ["slack", "discord", "webhook", null, "", "none"];
   if (chType && !allowed.includes(chType))
     errors.alert_channel_type = "Unknown alert channel";
-  if (chType === "demo" && !isDemoMode())
-    errors.alert_channel_type = "Demo sink is only available in demo mode";
   if ((chType === "slack" || chType === "discord" || chType === "webhook") && !(input.alert_channel_url ?? "").trim()) {
     errors.alert_channel_url = "Webhook URL is required for this channel";
   }

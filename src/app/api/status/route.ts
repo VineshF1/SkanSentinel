@@ -1,6 +1,5 @@
 import { isAuthorized, unauthorizedResponse } from "@/lib/auth";
 import { getDb, getWorkerHeartbeat, nowSeconds } from "@/lib/db";
-import { isDemoMode } from "@/lib/config";
 
 export const runtime = "nodejs";
 
@@ -43,6 +42,5 @@ export async function GET(req: Request): Promise<Response> {
     worker_heartbeat: hb,
     worker_offline: hb === null || now - hb > 30,
     now,
-    demo_mode: isDemoMode(),
   });
 }

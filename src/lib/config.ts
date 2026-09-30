@@ -1,7 +1,3 @@
-export function isDemoMode(): boolean {
-  return process.env.DEMO_MODE === "1";
-}
-
 export function allowPrivateWebhooks(): boolean {
   return process.env.ALLOW_PRIVATE_WEBHOOKS === "1";
 }

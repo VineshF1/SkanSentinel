@@ -276,13 +276,11 @@ describe("alerts", () => {
     const row = db.prepare("SELECT delivery_status FROM alerts WHERE id=?").get(a) as { delivery_status: string };
     expect(row.delivery_status).toBe("SKIPPED");
   });
-  it("demo channel is delivered without network", async () => {
-    const id = mkMonitor({ alert_channel_type: "demo" });
+  it("unknown channel types stay pending for the sender", async () => {
+    const id = mkMonitor({ alert_channel_type: "webhook", alert_channel_url: "http://127.0.0.1:9/hook" });
     const a = queueIncidentAlert(id, "FAILED", "FAILED", "boom", db);
     const row = db.prepare("SELECT delivery_status FROM alerts WHERE id=?").get(a) as { delivery_status: string };
-    expect(row.delivery_status).toBe("DELIVERED");
-    const sent = await sendPendingAlerts({ fetchFn: async () => { throw new Error("must not call network"); } }, db);
-    expect(sent).toBe(0);
+    expect(row.delivery_status).toBe("PENDING");
   });
   it("retries then fails finally", async () => {
     process.env.ALLOW_PRIVATE_WEBHOOKS = "1";
