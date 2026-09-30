@@ -29,14 +29,14 @@ Updated: 2026-09-30 UTC (production DB live, demo DB preserved)
 - [x] README.md, .env.example, Dockerfile, .gitignore (`data/`, `.env`)
 
 ## System state
-- All changes unstaged, nothing committed (repo had zero commits from scaffold)
-- `data/` ignored; no stray files (only `data/.gitkeep` absent — dir re-created on boot)
-- Dev deps: vitest 5.0.2 + vite (installed with --legacy-peer-deps), @types/better-sqlite3
+- Committed: `b892f6a` "Initial commit" (53 files, 12661 insertions); pushed to `github.com/VineshF1/SkanSentinel` (`Main:main` refspec — local branch is capital-`Main` due to a Windows ref collision, remote is `main`); remote URL updated to SkanSentinel (repo renamed from ZETAQ). Handoff edits since commit are unstaged.
+- `data/` (`production.db`, `skansentinel.db`), `.env`, `node_modules/` excluded via .gitignore
+- Future commits per `Area: verb + what` on explicit instruction only
 
 ## Pending
-- Docker image build + run: Dockerfile fixed by inspection (removed `public/` copy, added `.dockerignore`); daemon is off on this host so `docker build` could not run. Run `docker build -t skansentinel .` on a machine with the daemon up before shipping the image.
-- `middleware.ts` → `proxy.ts` rename (Next 16 deprecation warning; works as-is, server log shows it runs as proxy.ts internally)
-- README rewritten in 13-section style (title → AI disclosure), spec §10 content folded in; team section left as fill-in
+- Commit the demo-removal set when the user says so (deleted: `src/lib/demo.ts`, both `api/demo` routes; edited: instrumentation, config, monitors, alerts, status, channel route, dashboard, form, tests, .env files, README; simplified pause route). Unstaged.
+- Docker image build + run: Dockerfile fixed by inspection; daemon off on this host so `docker build` could not run.
+- `middleware.ts` → `proxy.ts` rename (Next 16 deprecation warning; works as-is).
 - Cron focus-steal fixed: form mount-focus re-fired on every 3s dashboard poll (inline onClose identity change) and yanked typing focus to the name field. Mount-focus runs once now, close handler is stable; cron field also gained a `* * * * *` placeholder, autocomplete/spellcheck off, monospace type
 - Cron live preview moved from below the whole form to directly under the cron expression field
 - Details page connect tabs: curl tab replaced with literal `curl.exe` commands (no variables, paste-ready on Windows); deviates from spec §5.3 which lists curl

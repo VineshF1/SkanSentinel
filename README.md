@@ -15,12 +15,11 @@ Give every job a monitor with two things: a secret ping token and a known schedu
 - **Monitors.** One watched job each: name, slug, cron schedule, timezone (defaults to IST, Asia/Kolkata), grace minutes, max runtime minutes, and an alert channel. The server generates a 64-character secret ping token per monitor.
 - **Ping API.** `POST .../start` when a run begins, `POST .../finish` or `/fail` when it ends, plus a one-hit heartbeat on the bare token URL. Public endpoints (the token is the credential), limited to 60 requests per minute per token, bodies capped at 256 KB, unknown tokens get a bare 404.
 - **Server-side detection.** A checker runs every 5 seconds and an alert sender every 3 seconds, inside the same server process. `MISSED` and `RUNAWAY` are sticky until the job itself reports back. The same repeating failure never re-alerts while its incident is open.
-- **Alert channels.** None (dashboard only), Slack, Discord, generic webhook, and a demo sink. Slack receives `{"text": ...}`, Discord receives `{"content": ...}`, webhooks receive structured JSON with monitor name, alert type, exit code, the last 20 log lines, and a timestamp. Failed deliveries retry with growing delays, then are marked failed. Every alert and its delivery state stays visible in the Recent Alerts panel.
+- **Alert channels.** None (dashboard only), Slack, Discord, and generic webhook. Slack receives `{"text": ...}`, Discord receives `{"content": ...}`, webhooks receive structured JSON with monitor name, alert type, exit code, the last 20 log lines, and a timestamp. Failed deliveries retry with growing delays, then are marked failed. Every alert and its delivery state stays visible in the Recent Alerts panel.
 - **Secret redaction.** Before any log or message is stored or sent, passwords, API keys, tokens, private keys, JWTs, and credentials inside URLs are replaced with `[REDACTED_...]` markers. Logs are capped at 64 KB and the redactor cannot throw.
 - **Dashboard.** Summary cards (total, healthy, running, missed, failed, runaway), a monitor table with status, last seen, next expected, and pause/resume/delete actions, live data refresh every 3 seconds, and a red banner if the background worker itself stops reporting.
 - **Monitor detail page.** Average, median (P50), and P95 run durations; copy-paste integration snippets for curl, Bash, Python, and Node.js; a duration bar chart; execution history with drift (how late each run started versus its slot); and a log viewer that turns every `[REDACTED_...]` marker into a badge.
 - **`skansentinel-exec` helper.** Wraps any shell command: sends start, runs the command, prints its output unchanged, sends finish or fail with the last 32 KB of output and the real exit code, and exits with the command's own code. If SkanSentinel is unreachable, the command still runs normally.
-- **Demo mode.** Four pre-seeded monitors (healthy, missed, failed, runaway) with realistic history, plus one-click simulations (crash, missed run, hang, secret leak) that travel the same real code paths as genuine pings.
 
 # 5. Tech stack
 
@@ -55,15 +54,14 @@ Open `.env` and set `ADMIN_PASSWORD` to a long random secret. The server refuses
 [Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))
 ```
 
-Leave `DEMO_MODE=0` for real use. `DATABASE_PATH` already points at `./data/production.db`; the folder is created automatically on boot. `ALLOW_PRIVATE_WEBHOOKS` stays `0` unless you are testing webhooks against localhost.
+`DATABASE_PATH` already points at `./data/production.db`; the folder is created automatically on boot. `ALLOW_PRIVATE_WEBHOOKS` stays `0` unless you are testing webhooks against localhost.
 
 # 8. Environment variables
 
 | Variable | Required | What it does |
 |---|---|---|
 | `ADMIN_PASSWORD` | Yes | Password for the dashboard login and every admin API. Compared in constant time; failed attempts are slowed down. |
-| `DEMO_MODE` | No | `1` seeds 4 fake monitors on first boot, shows the demo control bar, and enables the demo alert sink (alerts are marked delivered without network calls). `0` or unset is production mode. |
-| `DATABASE_PATH` | No | Filesystem path of the SQLite database. Default `./data/skansentinel.db`. Use `./data/production.db` locally and a mounted volume path (e.g. `/app/data/skansentinel.db`) in Docker. The old demo database is simply a different file; switching paths switches datasets. |
+| `DATABASE_PATH` | No | Filesystem path of the SQLite database. Default `./data/skansentinel.db`. Use `./data/production.db` locally and a mounted volume path (e.g. `/app/data/skansentinel.db`) in Docker. Switching paths switches datasets. |
 | `ALLOW_PRIVATE_WEBHOOKS` | No | `1` permits `http://` and localhost webhook URLs for local testing. Production must stay `0`, which enforces `https` URLs resolving to public addresses only, checked both when the URL is saved and again at send time. |
 
 Next.js reads these from the `.env` file automatically at boot. Command-line variables with the same names override the file.
@@ -84,7 +82,7 @@ Next.js reads these from the `.env` file automatically at boot. Command-line var
 
 **Statuses.** `PENDING` (created, nothing seen yet) · `HEALTHY` (last run succeeded, next not due) · `RUNNING` (started, unfinished) · `LATE` (overdue but inside grace, no alert) · `MISSED` (overdue past grace, alert sent) · `FAILED` (non-zero exit, alert sent) · `RUNAWAY` (over max runtime, alert sent) · `PAUSED` (switched off by you; never changes, never alerts; resuming returns to `PENDING` with a fresh expectation).
 
-**Alert channels.** None means dashboard-only (alerts still recorded as `SKIPPED`). Slack needs an incoming-webhook URL, Discord a channel webhook URL, generic webhook any `https` endpoint that accepts JSON. In demo mode an extra Demo sink marks alerts delivered without network calls.
+**Alert channels.** None means dashboard-only (alerts still recorded as `SKIPPED`). Slack needs an incoming-webhook URL, Discord a channel webhook URL, generic webhook any `https` endpoint that accepts JSON. The channel can be set at creation and changed later from the monitor's Details page, which also has a Send test alert button for instant verification.
 
 ## Running the server
 
@@ -147,14 +145,7 @@ npm test
 
 # 10. Demo link
 
-No public demo URL is deployed. To run the demo locally:
-
-```powershell
-$env:DEMO_MODE='1'
-npm run dev
-```
-
-Open http://localhost:3000: four pre-seeded monitors (healthy, missed, failed, runaway) with realistic history, plus a demo control bar with one-click crash, missed-run, hang, and secret-leak simulations. Every simulation travels the same real code paths as genuine pings; only timestamps are moved. Reset demo data wipes everything and re-seeds. Do not enable demo mode on a production database.
+No public demo URL is deployed, and the product ships without demo mode. To evaluate it, run it locally and create a monitor with cron `* * * * *`: ping start, watch `RUNNING`, stop pinging, and watch the server flip it to `MISSED` by itself.
 
 # 11. Team members
 
