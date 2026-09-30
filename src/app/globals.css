@@ -1,0 +1,85 @@
+@import "tailwindcss";
+
+:root {
+  --bg: #0b0c0e;
+  --panel: #141619;
+  --panel-2: #1b1e22;
+  --line: #262b31;
+  --text: #e8eaed;
+  --muted: #9aa1a9;
+  --faint: #6b7280;
+  --accent: #10b981;
+  --accent-ink: #06281f;
+  --danger: #f43f5e;
+  --warn: #f59e0b;
+  --info: #22d3ee;
+  --runaway: #a78bfa;
+  --focus: #34d399;
+}
+
+html {
+  background: var(--bg);
+}
+
+body {
+  background: var(--bg);
+  color: var(--text);
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto,
+    "Helvetica Neue", Arial, system-ui, sans-serif;
+  font-feature-settings: "tnum" 1;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Visible keyboard focus everywhere */
+:focus-visible {
+  outline: 2px solid var(--focus);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+/* Skeleton loading blocks */
+@keyframes sk-shimmer {
+  0% {
+    opacity: 0.45;
+  }
+  50% {
+    opacity: 0.9;
+  }
+  100% {
+    opacity: 0.45;
+  }
+}
+
+.skeleton {
+  background: var(--panel-2);
+  border-radius: 6px;
+  animation: sk-shimmer 1.4s ease-in-out infinite;
+}
+
+/* Status pulse dot (spec: RUNNING, FAILED, MISSED, RUNAWAY) */
+@keyframes status-ping {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+
+.pulse-dot {
+  animation: status-ping 1.6s ease-in-out infinite;
+}
+
+/* Restrained motion: honor reduced-motion preferences */
+@media (prefers-reduced-motion: reduce) {
+  .skeleton,
+  .pulse-dot {
+    animation: none;
+  }
+  *,
+  *::before,
+  *::after {
+    transition-duration: 0.01ms !important;
+  }
+}

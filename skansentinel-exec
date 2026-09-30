@@ -1,0 +1,38 @@
+#!/bin/sh
+# skansentinel-exec — run any command and report it to SkanSentinel.
+# Usage: skansentinel-exec "$BASE_URL" "$PING_TOKEN" -- <command> [args...]
+# Sends start before the command, finish/fail after, with the last 32 KB of
+# combined output. Prints output unchanged, exits with the command's own code.
+# If SkanSentinel is unreachable, the command still runs normally.
+set -u
+
+BASE="${1:-}"
+TOKEN="${2:-}"
+if [ -z "$BASE" ] || [ -z "$TOKEN" ]; then
+  echo "usage: skansentinel-exec BASE_URL PING_TOKEN -- <command> [args...]" >&2
+  exit 2
+fi
+shift 2
+if [ "${1:-}" = "--" ]; then shift; fi
+if [ "$#" -eq 0 ]; then
+  echo "usage: skansentinel-exec BASE_URL PING_TOKEN -- <command> [args...]" >&2
+  exit 2
+fi
+
+BASE="$(printf '%s' "$BASE" | sed 's:/*$::')"
+
+# start ping — never break the job on failure
+curl -sS -m 5 -X POST "$BASE/api/ping/$TOKEN/start" >/dev/null 2>&1 || true
+
+TMP="$(mktemp 2>/dev/null || echo /tmp/skansentinel-exec.$$)"
+"$@" >"$TMP" 2>&1
+CODE=$?
+cat "$TMP"
+
+# last 32 KB of output, sent as plain-text body with exit code in query
+TAIL="$(mktemp 2>/dev/null || echo /tmp/skansentinel-tail.$$)"
+tail -c 32768 "$TMP" >"$TAIL" 2>/dev/null || cp "$TMP" "$TAIL" 2>/dev/null || true
+curl -sS -m 10 -X POST --data-binary "@$TAIL" "$BASE/api/ping/$TOKEN/finish?exit_code=$CODE" >/dev/null 2>&1 || true
+rm -f "$TMP" "$TAIL" 2>/dev/null || true
+
+exit "$CODE"
