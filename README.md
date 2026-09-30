@@ -1,107 +1,108 @@
-# 1. Project title
+# SkanSentinel
 
-**SkanSentinel** — a heartbeat monitor that detects when scheduled background jobs crash, never start, or freeze, and sends an alert. Silence is the alarm: if an expected ping does not arrive, SkanSentinel notices on its own, on the server, even with no dashboard open.
+SkanSentinel is a monitoring and alerting system for scheduled background jobs.
 
-# 2. Problem
+For example, imagine a company has a backup job:
 
-Scheduled jobs (database backups, payment renewals, hourly rollups) fail silently. A backup that never starts looks identical to a backup that is not needed yet, because in both cases nothing happens. Teams discover the gap days later, from a customer complaint or an empty report, because nothing was watching for absence. Normal monitoring watches things that happen (errors, CPU spikes). Nobody watches the things that should have happened but did not.
+- Every night at 2:00 AM → Database backup runs
+- Normally, nobody watches this job manually.
 
-# 3. Solution
+If the job crashes because of a database timeout, a server or memory problem, a broken file path, a network issue, or a worker failure, the job may simply stop without anyone knowing.
 
-Give every job a monitor with two things: a secret ping token and a known schedule. The job calls SkanSentinel when it starts and when it finishes. SkanSentinel always knows when the next ping is due. If the due time plus a grace period passes with no ping, the job is marked missed. If a run takes longer than its maximum runtime, it is marked runaway. If it finishes with a non-zero exit code, it is marked failed. Each incident sends exactly one alert, and the next healthy run sends one recovery notice. Detection runs on the server on a timer, so it works with every browser tab closed.
+SkanSentinel's job is to detect that failure and immediately alert the developers.
 
-# 4. Features
+## The problem
 
-- **Monitors.** One watched job each: name, slug, cron schedule, timezone (defaults to IST, Asia/Kolkata), grace minutes, max runtime minutes, and an alert channel. The server generates a 64-character secret ping token per monitor.
-- **Ping API.** `POST .../start` when a run begins, `POST .../finish` or `/fail` when it ends, plus a one-hit heartbeat on the bare token URL. Public endpoints (the token is the credential), limited to 60 requests per minute per token, bodies capped at 256 KB, unknown tokens get a bare 404.
-- **Server-side detection.** A checker runs every 5 seconds and an alert sender every 3 seconds, inside the same server process. `MISSED` and `RUNAWAY` are sticky until the job itself reports back. The same repeating failure never re-alerts while its incident is open.
-- **Alert channels.** None (dashboard only), Slack, Discord, and generic webhook. Slack receives `{"text": ...}`, Discord receives `{"content": ...}`, webhooks receive structured JSON with monitor name, alert type, exit code, the last 20 log lines, and a timestamp. Failed deliveries retry with growing delays, then are marked failed. Every alert and its delivery state stays visible in the Recent Alerts panel.
-- **Secret redaction.** Before any log or message is stored or sent, passwords, API keys, tokens, private keys, JWTs, and credentials inside URLs are replaced with `[REDACTED_...]` markers. Logs are capped at 64 KB and the redactor cannot throw.
-- **Dashboard.** Summary cards (total, healthy, running, missed, failed, runaway), a monitor table with status, last seen, next expected, and pause/resume/delete actions, live data refresh every 3 seconds, and a red banner if the background worker itself stops reporting.
-- **Monitor detail page.** Average, median (P50), and P95 run durations; copy-paste integration snippets for curl, Bash, Python, and Node.js; a duration bar chart; execution history with drift (how late each run started versus its slot); and a log viewer that turns every `[REDACTED_...]` marker into a badge.
-- **`skansentinel-exec` helper.** Wraps any shell command: sends start, runs the command, prints its output unchanged, sends finish or fail with the last 32 KB of output and the real exit code, and exits with the command's own code. If SkanSentinel is unreachable, the command still runs normally.
+Scheduled jobs fail in the worst way: quietly. A normal bug in your app throws an error, and errors get caught by regular monitoring. A job that never runs produces *nothing* — no error, no log line, no alert. A backup that crashed at 2 AM looks exactly like a backup that wasn't needed. Both cases: silence.
 
-# 5. Tech stack
+So teams find out days later, when a restore fails or a report comes up empty, and by then the problem is ancient history. Normal monitoring watches things that happen. Nobody watches things that **should** have happened but didn't. That gap is what SkanSentinel fills.
 
-- **Next.js 16** (App Router, TypeScript) running as one long-lived Node.js server. Not serverless, not the Edge runtime.
-- **SQLite** through `better-sqlite3`, listed in `serverExternalPackages` so the native binary is never bundled. One file, write-ahead logging, foreign keys, busy timeout.
-- **`cron-parser`** (v5 API) for schedule math and **`cronstrue`** for plain-English schedule text ("At 02:00 AM").
-- **Tailwind CSS v4**, system font stack (no webfont downloads), **`lucide-react`** icons on action buttons only.
-- **Vitest**: 54 unit tests covering the sanitizer, scheduler, checker, alerts, pings, and auth.
+## How it works
 
-# 6. Architecture
+Each job gets a monitor with two things: a secret ping token and a known cron schedule. The job sends SkanSentinel a "started / finished / failed" message when it runs. SkanSentinel knows the schedule, so it always knows when the next message is due:
 
-One Node.js process does three jobs. It serves the dashboard pages, it serves the API routes, and it runs a background worker started once from `src/instrumentation.ts` (Node.js runtime only, guarded against duplicate timers on hot reload). The worker has two loops: the **checker** (every 5 seconds: LATE/MISSED/RUNAWAY transitions, worker heartbeat write) and the **alert sender** (every 3 seconds: delivery, retries, final failure marking). Keeping everything in one process guarantees alerts can never double-fire from two instances; the price is that monitoring stops if the process dies, so an outside uptime checker should watch `/healthz`.
+- If the expected message doesn't arrive in time (due time + a grace period), the job is marked **MISSED**.
+- If the job runs too long (past its max runtime), it is marked **RUNAWAY**.
+- If the job reports a failed exit code, it is marked **FAILED**.
 
-The database has four tables. `monitors` stores one row per watched job: schedule, tolerances, token, current status, the currently open incident, and timing fields. `executions` stores one row per run and keeps the newest 200 per monitor. `alerts` stores every incident and recovery notice with delivery state and retry counters. `meta` is a small key-value shelf holding the worker heartbeat. Every timestamp is epoch seconds, produced by one shared helper, because mixing milliseconds and seconds would make every job look decades overdue. Each state change and its alert row are written in the same database transaction, so a crash can never lose an alert.
+Any of these immediately alerts the team on Slack, Discord, or a generic webhook. The alert includes the error log with secrets like passwords and API keys removed. The next successful run sends a "recovered" notice so everyone knows the job is back.
 
-Only three things are public: the ping routes, `/healthz`, and the `skansentinel-exec` download. Everything else requires the admin password over HTTP Basic login, checked in constant time with a delay on failures. Webhook URLs are never returned by any API and never shown in the UI.
+Two details make this trustworthy. Detection runs on a timer inside the server, not in the browser — it works with every laptop closed. And each failure produces exactly **one** alert, so a job crash-looping for a week doesn't bury your Slack channel.
 
-# 7. Setup
+## Features
 
-Prerequisites: Node.js 22 or newer, npm, and Git.
+- **Monitors.** One watched job each: name, cron schedule, timezone (defaults to IST), grace minutes, max runtime minutes, and an alert channel. The server generates a secret 64-character ping token per monitor.
+- **Ping API.** The job calls `.../start` when it begins and `.../finish` or `.../fail` when it ends. Simple jobs can just hit the bare ping URL once per run. These are the only public endpoints, rate-limited to 60 requests/minute and capped at 256 KB bodies.
+- **Server-side detection.** A checker runs every 5 seconds and an alert sender every 3 seconds, inside the server. MISSED and RUNAWAY stick until the job itself reports back.
+- **Alert channels.** Slack, Discord, generic webhook, or dashboard-only. The webhook message carries the monitor name, what went wrong, the exit code, and the last 20 log lines. Failed deliveries are retried automatically.
+- **Secret redaction.** Before any log is stored or sent, passwords, API keys, tokens, private keys, JWTs, and credentials inside URLs are replaced with `[REDACTED_...]` markers — so an alert can never leak a secret into Slack.
+- **Dashboard.** Status cards, a monitor table refreshing every 3 seconds, pause/resume/delete actions, and a red banner if the background worker itself stops reporting.
+- **Detail page per monitor.** Average / median / P95 run durations, a duration chart, run history showing how late each run started, and copy-paste snippets for curl, Bash, Python, and Node.js.
+- **`skansentinel-exec` helper.** A tiny shell script that wraps any command: sends start, runs the job, sends finish/fail with the real exit code and the job's output, and exits with the job's own code. If SkanSentinel is unreachable, the job runs anyway — monitoring can never break what it monitors.
+
+## Tech stack
+
+| Area | Details |
+|------|---------|
+| Runtime | Next.js 16 (App Router, TypeScript) as one long-lived Node.js server — deliberately not serverless, because the background worker needs a living process |
+| Database | SQLite via `better-sqlite3` — one file, write-ahead logging, foreign keys. Zero database services to run. |
+| Scheduling | `cron-parser` for the schedule math, `cronstrue` to show cron in plain English ("At 02:00 AM") |
+| UI | Tailwind CSS v4, system fonts, lucide-react icons |
+| Auth | HTTP Basic auth in middleware, constant-time comparison |
+| Tests | Vitest — 54 unit tests, all passing |
+
+## Architecture
+
+One Node.js process does three jobs: it serves the dashboard, it serves the API, and it runs a background worker with two loops — the **checker** (every 5 seconds: is anyone overdue or stuck?) and the **alert sender** (every 3 seconds: deliver queued alerts, retry failures).
+
+```
+        browser ──HTTPS──► Next.js :3000 (one process)
+                            ├── pages + admin API   (Basic auth)
+                            ├── /api/ping/:token/*  (public, token = credential)
+                            ├── /healthz            (public, for an outside uptime check)
+                            └── instrumentation.ts ──► worker (started once, Node-only)
+                                                        ├── checker  every 5 s
+                                                        └── sender   every 3 s
+                                                            │
+                                                        SQLite (WAL, FKs)
+                                                        ./data/*.db — mount a volume in Docker
+```
+
+Keeping it in one process means an alert can never double-fire from two servers. The honest trade-off: if the process dies, monitoring pauses — so you point any outside uptime checker at `/healthz`.
+
+The database has four tables: `monitors` (the schedule, tolerances, token, current status), `executions` (one row per run, newest 200 kept), `alerts` (every incident and recovery, plus delivery state), and `meta` (the worker's heartbeat). Every timestamp is stored as epoch seconds from one shared helper, because mixing milliseconds and seconds would make every job look decades overdue. A status change and its alert are written in the **same database transaction**, so even a crash mid-write can't lose an alert.
+
+The public surface is exactly three things: the ping routes, `/healthz`, and the `skansentinel-exec` download. Everything else needs the admin password, and webhook URLs are never returned by any API.
+
+## Getting started
+
+Prerequisites: Node.js 22+, npm, Git.
 
 ```powershell
-git clone <your-repo-url>
+git clone https://github.com/VineshF1/SkanSentinel
 cd SkanSentinel
 npm install
 Copy-Item .env.example .env
 ```
 
-Open `.env` and set `ADMIN_PASSWORD` to a long random secret. The server refuses to start while it is empty or still the placeholder. On Windows, generate one with:
-
-```powershell
-[Convert]::ToBase64String((1..32 | ForEach-Object { Get-Random -Maximum 256 }))
-```
-
-`DATABASE_PATH` already points at `./data/production.db`; the folder is created automatically on boot. `ALLOW_PRIVATE_WEBHOOKS` stays `0` unless you are testing webhooks against localhost.
-
-# 8. Environment variables
+Open `.env` and set `ADMIN_PASSWORD` to a long random secret — the server refuses to start without one. `DATABASE_PATH` already points at `./data/production.db`, and the folder is created automatically on first boot.
 
 | Variable | Required | What it does |
 |---|---|---|
 | `ADMIN_PASSWORD` | Yes | Password for the dashboard login and every admin API. Compared in constant time; failed attempts are slowed down. |
-| `DATABASE_PATH` | No | Filesystem path of the SQLite database. Default `./data/skansentinel.db`. Use `./data/production.db` locally and a mounted volume path (e.g. `/app/data/skansentinel.db`) in Docker. Switching paths switches datasets. |
-| `ALLOW_PRIVATE_WEBHOOKS` | No | `1` permits `http://` and localhost webhook URLs for local testing. Production must stay `0`, which enforces `https` URLs resolving to public addresses only, checked both when the URL is saved and again at send time. |
+| `DATABASE_PATH` | No | SQLite file path. Default `./data/skansentinel.db`. Use `./data/production.db` locally, a mounted volume path in Docker. |
+| `ALLOW_PRIVATE_WEBHOOKS` | No | `1` allows `http://`/localhost webhooks for local testing. Keep `0` in production: only `https` URLs to public addresses are accepted, checked at save time and again at send time. |
 
-Next.js reads these from the `.env` file automatically at boot. Command-line variables with the same names override the file.
-
-# 9. Run instructions
-
-## Key concepts, in detail
-
-**Cron expression.** Five fields separated by spaces: `minute hour day-of-month month day-of-week`. Each field is a number, a list (`1,15`), a range (`1-5`), a step (`*/15`), or `*` for every value. Examples: `0 2 * * *` means 02:00 every day; `*/30 * * * *` means every 30 minutes; `0 9 * * 1` means 09:00 every Monday. The New monitor form shows a live preview of the next 3 run times plus the plain-English text, or a red error if the expression is invalid. Exactly 5 fields are required.
-
-**Timezone.** An IANA name such as `Asia/Kolkata`, `UTC`, or `America/New_York`. The schedule is interpreted in this zone, so `0 9 * * *` with `Asia/Kolkata` fires at 9 AM IST. The app default is IST; change it per monitor if the job runs in another region.
-
-**Grace minutes.** How late a ping may be before it counts as missed. A daily backup over a slow network might allow 15; a job every 5 minutes might allow 1 or 2. While a monitor is past its expected time but inside grace, it shows `LATE` and stays silent.
-
-**Max runtime minutes.** How long a single run may stay in `RUNNING` before it is declared `RUNAWAY`. Set it above the job's worst normal duration with headroom.
-
-**Ping token.** A 64-character secret that identifies the monitor. It is shown once on the Details page as part of the Ping URL. Anyone holding it can report runs, so treat it like a password and never log it.
-
-**Statuses.** `PENDING` (created, nothing seen yet) · `HEALTHY` (last run succeeded, next not due) · `RUNNING` (started, unfinished) · `LATE` (overdue but inside grace, no alert) · `MISSED` (overdue past grace, alert sent) · `FAILED` (non-zero exit, alert sent) · `RUNAWAY` (over max runtime, alert sent) · `PAUSED` (switched off by you; never changes, never alerts; resuming returns to `PENDING` with a fresh expectation).
-
-**Alert channels.** None means dashboard-only (alerts still recorded as `SKIPPED`). Slack needs an incoming-webhook URL, Discord a channel webhook URL, generic webhook any `https` endpoint that accepts JSON. The channel can be set at creation and changed later from the monitor's Details page, which also has a Send test alert button for instant verification.
-
-## Running the server
-
-Development (compiles on demand, slower first load):
-
-```powershell
-npm run dev
-```
-
-Production (prebuilt, fast; rebuild after every code change):
+Then build and run:
 
 ```powershell
 npm run build
 npm run start -- -p 3000
 ```
 
-Open http://localhost:3000 and log in with the `ADMIN_PASSWORD` (any username works).
+(or `npm run dev` while developing). Open http://localhost:3000 and log in with your `ADMIN_PASSWORD` — any username works.
 
-## Running with Docker
+With Docker:
 
 ```powershell
 docker build -t skansentinel .
@@ -111,56 +112,65 @@ docker run -p 3000:3000 `
   skansentinel
 ```
 
-The `-v` flag mounts a named volume at `/app/data` so the SQLite file survives container restarts and redeploys. Without it, every container replacement wipes all monitors and history.
+The `-v` mount keeps the SQLite file alive across container restarts — without it, every redeploy wipes all monitors and history.
 
-## Adding a job, end to end
+## Try it: the failure-detection demo in two minutes
 
-1. Dashboard → **New monitor**. Fill name, slug, cron (watch the live preview), timezone, grace, max runtime, and channel. Create.
-2. Open its **Details** page and copy the **Ping URL**.
-3. Wrap the job. With the helper:
+There's no public demo URL, but the two-minute version to run locally is the real pitch:
 
-```bash
-./skansentinel-exec http://your-server:3000 <PING_TOKEN> -- ./your-job.sh
+1. Dashboard → **New monitor** → set cron to `* * * * *` (every minute). The form previews the next runs in plain English as you type.
+2. Copy the **Ping URL** from its Details page.
+3. Wrap a job with the helper — `./skansentinel-exec http://localhost:3000 <TOKEN> -- ./your-job.sh` — or just curl `/start` before the work and `/finish` after.
+4. Watch the row move PENDING → RUNNING → HEALTHY.
+5. Now **stop the job** and do nothing else. Within a couple of minutes the server notices the missing ping and flips the monitor to MISSED — and the alert fires — all by itself. The next successful run sends RECOVERED.
+
+That silent flip from HEALTHY to MISSED, with no browser open, is the whole product.
+
+Run the tests with `npm test` (54 tests, all passing).
+
+## Project structure
+
+```text
+SkanSentinel/
+├── skansentinel-exec            # shell wrapper: start → run → finish/fail, exits with the job's code
+├── Dockerfile / .dockerignore
+├── src/
+│   ├── middleware.ts            # Basic auth for everything except ping / healthz / exec
+│   ├── instrumentation.ts       # starts the worker once, Node runtime only
+│   ├── app/
+│   │   ├── page.tsx             # dashboard — summary cards, live table, new-monitor form
+│   │   ├── monitors/[id]/page.tsx # stats, snippets, chart, history, log viewer, alert channel
+│   │   ├── healthz/route.ts     # {"ok":true} for external uptime checks
+│   │   ├── skansentinel-exec/route.ts # helper download (public)
+│   │   └── api/
+│   │       ├── ping/[token]/    # start / finish / fail + bare-token heartbeat
+│   │       ├── monitors/        # CRUD + pause / resume / channel / test-alert
+│   │       ├── alerts/route.ts  # recent alerts feed
+│   │       ├── status/route.ts  # dashboard snapshot + worker_online
+│   │       └── cron-preview/route.ts # plain English + next 3 times while you type
+│   └── lib/
+│       ├── time.ts              # one epoch-seconds helper used everywhere
+│       ├── db.ts                # schema, WAL / FK / busy-timeout, 200-run prune
+│       ├── engine.ts            # start / finish / fail / heartbeat transitions
+│       ├── worker.ts            # checker (5 s) + sender (3 s) loops
+│       ├── schedule.ts          # cron next-run, drift, grace windows
+│       ├── sanitizer.ts         # 7 ordered redaction rules, 64 KB cap, never throws
+│       ├── alerts.ts            # channels, retry/backoff, payload bodies
+│       ├── monitors.ts          # validation, token gen, SSRF check at save
+│       └── auth.ts              # constant-time compare
+├── tests/unit.test.ts           # 54 tests
+└── .env.example
 ```
 
-Manually with curl:
+## Known limitations
 
-```bash
-curl -X POST <PING_URL>/start
-# ... do the work ...
-curl -X POST <PING_URL>/finish
-```
+- Runs as **one** server process with persistent disk (VPS, Render, Railway, Fly.io). It will not work on serverless hosts like Vercel — the worker needs a living process.
+- Login is HTTP Basic: put it behind HTTPS and choose a strong `ADMIN_PASSWORD`.
+- Webhook hosts are checked at save time and send time; a DNS change in between is not covered.
+- If the server dies, monitoring stops with it; point an outside uptime checker at `/healthz`.
+- `docker build` and native shell execution of `skansentinel-exec` were verified at the HTTP layer only on the Windows build host — run both on Linux/macOS to confirm end to end.
+- The default timezone is IST (`Asia/Kolkata`); any valid IANA timezone still works per monitor.
 
-On failure send the exit code: `curl -X POST "<PING_URL>/finish?exit_code=3"` or `POST <PING_URL>/fail`. The Details page also gives Python and Node.js snippets that ping start before the work, finish on success, and fail with the error text on exception, all with short timeouts so pinging can never break the job.
+## Credits
 
-4. Watch the dashboard row move `PENDING` → `RUNNING` → `HEALTHY`. Then test the alarms: stop the job and wait past grace to see `MISSED`, or let one run overrun to see `RUNAWAY`. The next good run sends `RECOVERED`.
-
-## Running the tests
-
-```bash
-npm test
-```
-
-54 tests covering redaction rules, schedule math, checker transitions, alert-once/recovery/retry behavior, webhook body shapes and safety rejections, ping lifecycles, rate limits, and auth helpers.
-
-# 10. Demo link
-
-No public demo URL is deployed, and the product ships without demo mode. To evaluate it, run it locally and create a monitor with cron `* * * * *`: ping start, watch `RUNNING`, stop pinging, and watch the server flip it to `MISSED` by itself.
-
-# 11. Team members
-
-Solo project. (Replace this line with the team list before submitting.)
-
-# 12. Known limitations
-
-- Run **one** server process with persistent disk (VPS, Render, Railway, Fly.io). It will **not** work on serverless hosts like Vercel.
-- Login is basic HTTP auth; put it behind HTTPS in production and choose a strong `ADMIN_PASSWORD`.
-- Webhook host checks happen at save and send time; DNS changes between the two checks are not covered.
-- If the server dies, monitoring stops; point an outside uptime checker at `/healthz`.
-- `docker build` was not exercised here (the Docker daemon is offline on the build host); verify it before shipping the image.
-- Native execution of `skansentinel-exec` was verified at the HTTP layer only (no POSIX shell on the build host); run it on Linux or macOS to confirm end to end.
-- The default timezone is IST (`Asia/Kolkata`), which differs from the original spec's UTC default; per-monitor timezones still accept any valid IANA name.
-
-# 13. AI/tool disclosure
-
-Built with AI-assisted coding (OpenCode agent harness, Muse Spark model) under the author's direction: the author supplied the full product spec, the UI design briefs, the timezone and database decisions, and every verification call. All tests and live checks reported here were actually executed and their real output reviewed; items that could not be verified are listed under Known limitations instead of claimed.
+Solo project. Built with AI-assisted coding (OpenCode agent harness) under the author's direction: the author supplied the product spec, UI design briefs, timezone and database decisions, and every verification call. All tests and live checks reported here were actually executed and their output reviewed; anything that could not be verified is listed under Known limitations instead of claimed.
