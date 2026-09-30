@@ -19,6 +19,19 @@ So teams find out days later, when a restore fails or a report comes up empty, a
 
 ## How it works
 
+```
+[Your cron job] ──ping──► [SkanSentinel server] ──stores──► [SQLite database] ◄──reads── [Dashboard in browser]
+                                   │
+                                   └──alert──► [Slack / Discord / webhook]
+```
+
+Four players, one loop:
+
+1. **Your job** (a cron script) sends a "started / finished / failed" ping to SkanSentinel.
+2. **The SkanSentinel server** stores every ping in **SQLite** and keeps a timer running.
+3. **The dashboard** reads that same database — so what you see is exactly what the server knows.
+4. If a ping is missing or a run fails, the server doesn't wait for the dashboard — it pushes an **alert** to Slack, Discord, or a webhook on its own.
+
 Each job gets a monitor with two things: a secret ping token and a known cron schedule. The job sends SkanSentinel a "started / finished / failed" message when it runs. SkanSentinel knows the schedule, so it always knows when the next message is due:
 
 - If the expected message doesn't arrive in time (due time + a grace period), the job is marked **MISSED**.
@@ -53,26 +66,31 @@ Two details make this trustworthy. Detection runs on a timer inside the server, 
 
 ## Architecture
 
-One Node.js process does three jobs: it serves the dashboard, it serves the API, and it runs a background worker with two loops — the **checker** (every 5 seconds: is anyone overdue or stuck?) and the **alert sender** (every 3 seconds: deliver queued alerts, retry failures).
+```mermaid
+flowchart LR
+    BROWSER[Browser dashboard]
+    subgraph SRV [One Node.js process - Next.js :3000]
+        UI["dashboard + admin API<br/>Basic auth"]
+        PING["/api/ping/:token<br/>start / finish / fail"]
+        HZ["/healthz"]
+        SAN["sanitizer<br/>[REDACTED_*]"]
+        subgraph W [background worker]
+            CK["checker · every 5 s<br/>LATE / MISSED / RUNAWAY"]
+            AL["sender · every 3 s<br/>deliver + retry"]
+        end
+    end
+    JOB[Your job: backup / rollup / renewal]
+    DB[("SQLite · WAL<br/>monitors · executions<br/>alerts · meta")]
+    SL[Slack / Discord / webhook]
 
+    BROWSER --> UI
+    JOB -- "token ping" --> PING --> SAN --> DB
+    UI --> DB
+    CK --> DB
+    AL --> SL
+    CK -. "state change + alert row,<br/>same transaction" .-> DB
+    UPTIME[Outside uptime checker] -.-> HZ
 ```
-        browser ──HTTPS──► Next.js :3000 (one process)
-                            ├── pages + admin API   (Basic auth)
-                            ├── /api/ping/:token/*  (public, token = credential)
-                            ├── /healthz            (public, for an outside uptime check)
-                            └── instrumentation.ts ──► worker (started once, Node-only)
-                                                        ├── checker  every 5 s
-                                                        └── sender   every 3 s
-                                                            │
-                                                        SQLite (WAL, FKs)
-                                                        ./data/*.db — mount a volume in Docker
-```
-
-Keeping it in one process means an alert can never double-fire from two servers. The honest trade-off: if the process dies, monitoring pauses — so you point any outside uptime checker at `/healthz`.
-
-The database has four tables: `monitors` (the schedule, tolerances, token, current status), `executions` (one row per run, newest 200 kept), `alerts` (every incident and recovery, plus delivery state), and `meta` (the worker's heartbeat). Every timestamp is stored as epoch seconds from one shared helper, because mixing milliseconds and seconds would make every job look decades overdue. A status change and its alert are written in the **same database transaction**, so even a crash mid-write can't lose an alert.
-
-The public surface is exactly three things: the ping routes, `/healthz`, and the `skansentinel-exec` download. Everything else needs the admin password, and webhook URLs are never returned by any API.
 
 ## Getting started
 
@@ -171,6 +189,4 @@ SkanSentinel/
 - `docker build` and native shell execution of `skansentinel-exec` were verified at the HTTP layer only on the Windows build host — run both on Linux/macOS to confirm end to end.
 - The default timezone is IST (`Asia/Kolkata`); any valid IANA timezone still works per monitor.
 
-## Credits
 
-Solo project. Built with AI-assisted coding (OpenCode agent harness) under the author's direction: the author supplied the product spec, UI design briefs, timezone and database decisions, and every verification call. All tests and live checks reported here were actually executed and their output reviewed; anything that could not be verified is listed under Known limitations instead of claimed.
