@@ -207,9 +207,8 @@ function NewMonitorForm({ onClose, onDone }: Props) {
             )}
           </div>
 
-          {form.alert_channel_type !== "none" &&
-            form.alert_channel_type !== "demo" && (
-              <div>
+          {form.alert_channel_type !== "none" && (
+            <div>
                 <label
                   htmlFor="nm-url"
                   className="mb-1 block text-xs font-medium text-[#9aa1a9]"

@@ -36,7 +36,6 @@ type StatusResp = {
   alerts: Alert[];
   worker_offline: boolean;
   now: number;
-  demo_mode: boolean;
 };
 
 function ago(ts: number | null, now: number): string {
@@ -165,7 +164,6 @@ export default function Dashboard() {
   const [data, setData] = useState<StatusResp | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showNew, setShowNew] = useState(false);
-  const [demoMonitor, setDemoMonitor] = useState("");
   // Stable callbacks: the dashboard re-renders every 3s on poll, and an
   // inline onClose would re-fire the form's effects (including its
   // mount-focus) and steal typing focus. These keep their identity.
@@ -210,14 +208,6 @@ export default function Dashboard() {
 
   const pause = useCallback((id: number) => post(`/api/monitors/${id}/pause`), [post]);
   const resume = useCallback((id: number) => post(`/api/monitors/${id}/resume`), [post]);
-
-  const simulate = useCallback(
-    (kind: string) => {
-      if (!demoMonitor) return;
-      post("/api/demo/simulate", { monitorId: Number(demoMonitor), kind });
-    },
-    [demoMonitor, post]
-  );
 
   const counts = useMemo(
     () =>
@@ -292,61 +282,6 @@ export default function Dashboard() {
           </div>
         ))}
       </section>
-
-      {data?.demo_mode && (
-        <section
-          aria-label="Demo controls"
-          className="mb-3 rounded-lg border border-[#262b31] bg-[#141619] px-3.5 py-3"
-        >
-          <div className="mb-2 text-sm font-medium">
-            Demo controls{" "}
-            <span className="font-normal text-[#6b7280]">
-              (labeled simulation, runs through the real ping path)
-            </span>
-          </div>
-          <div className="flex flex-wrap items-center gap-2">
-            <label htmlFor="demo-pick" className="sr-only">
-              Pick a monitor to simulate against
-            </label>
-            <select
-              id="demo-pick"
-              value={demoMonitor}
-              onChange={(e) => setDemoMonitor(e.target.value)}
-              className="rounded-md border border-[#262b31] bg-[#0b0c0e] px-2.5 py-1.5 text-sm"
-            >
-              <option value="">Pick a monitor…</option>
-              {(data?.monitors ?? []).map((m) => (
-                <option key={m.id} value={m.id}>
-                  {m.name}
-                </option>
-              ))}
-            </select>
-            {(
-              [
-                ["crash", "Simulate crash"],
-                ["missed", "Simulate missed run"],
-                ["hang", "Simulate hang"],
-                ["leak", "Simulate secret leak"],
-              ] as [string, string][]
-            ).map(([k, label]) => (
-              <button
-                key={k}
-                onClick={() => simulate(k)}
-                disabled={!demoMonitor}
-                className="rounded-md border border-[#262b31] bg-[#1b1e22] px-2.5 py-1.5 text-sm hover:border-[#3a4149] disabled:opacity-50"
-              >
-                {label}
-              </button>
-            ))}
-            <button
-              onClick={() => post("/api/demo/reset")}
-              className="rounded-md px-2.5 py-1.5 text-sm text-[#9aa1a9] hover:text-white"
-            >
-              Reset demo data
-            </button>
-          </div>
-        </section>
-      )}
 
       <section
         aria-label="Monitors"
